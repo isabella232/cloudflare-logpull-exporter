@@ -7,28 +7,30 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bitgo/cloudflare-logpull-exporter/pkg/logpull"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 // TestCollectorHTTPResponses checks that the collector emits correct
-// `cloudflare_logs_http_responses` metrics.
+// `cloudflare_logs_http_responses` metrics
 func TestCollectorHTTPResponses(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		jsonBody := []byte(`{"ClientRequestHost": "example.org", "EdgeResponseStatus": 200, "OriginResponseStatus": 200}`)
 		if _, err := w.Write(jsonBody); err != nil {
-			t.Errorf("unexpected error: %s", err)
+			t.Fatalf("unexpected error: %s", err)
 		}
 	}))
 	defer ts.Close()
 
-	api := newLogpullAPI("", "")
-	api.setAPIProperties(ts.URL, ts.Client())
+	api := logpull.New("", "")
+	api.HTTPClient = ts.Client()
+	api.BaseURL = ts.URL
 
 	c, err := newCollector(api, []string{""}, time.Minute, func(err error) {
-		t.Errorf("unexpected error: %s", err)
+		t.Fatalf("unexpected error: %s", err)
 	})
 	if err != nil {
-		t.Errorf("unexpected error: %s", err)
+		t.Fatalf("unexpected error: %s", err)
 	}
 
 	expected := strings.NewReader(`
@@ -43,23 +45,25 @@ func TestCollectorHTTPResponses(t *testing.T) {
 }
 
 // TestCollectorErrors checks that the collector emits the
-// `cloudflare_logs_errors_total` metric when errors are returned from
-// logpullAPI.pullLogEntries.
+// `cloudflare_logs_errors_total` metric when errors are returned from the
+// Logpull API
 func TestCollectorErrors(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		if _, err := w.Write([]byte("the server's on fire")); err != nil {
-			t.Errorf("unexpected error: %s", err)
+		_, err := w.Write([]byte("the server's on fire"))
+		if err != nil {
+			t.Fatalf("writing response body: %s", err)
 		}
 	}))
 	defer ts.Close()
 
-	api := newLogpullAPI("", "")
-	api.setAPIProperties(ts.URL, ts.Client())
+	api := logpull.New("", "")
+	api.HTTPClient = ts.Client()
+	api.BaseURL = ts.URL
 
 	c, err := newCollector(api, []string{""}, time.Minute, func(error) {})
 	if err != nil {
-		t.Errorf("unexpected error: %s", err)
+		t.Fatalf("unexpected error: %s", err)
 	}
 
 	expected := strings.NewReader(`

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bitgo/cloudflare-logpull-exporter/pkg/logpull"
 	"github.com/cloudflare/cloudflare-go"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -44,18 +45,18 @@ func main() {
 	}
 
 	var cfapi *cloudflare.API
-	var lpapi *logpullAPI
+	var lpapi *logpull.API
 	var err error
 
 	if apiToken != "" {
 		cfapi, err = cloudflare.NewWithAPIToken(apiToken)
-		lpapi = newLogpullAPIWithToken(apiToken)
+		lpapi = logpull.NewWithToken(apiToken)
 	} else if apiKey != "" {
 		cfapi, err = cloudflare.New(apiKey, apiEmail)
-		lpapi = newLogpullAPI(apiKey, apiEmail)
+		lpapi = logpull.New(apiKey, apiEmail)
 	} else {
 		cfapi, err = cloudflare.NewWithUserServiceKey(apiUserServiceKey)
-		lpapi = newLogpullAPIWithUserServiceKey(apiUserServiceKey)
+		lpapi = logpull.NewWithUserServiceKey(apiUserServiceKey)
 	}
 
 	if err != nil {

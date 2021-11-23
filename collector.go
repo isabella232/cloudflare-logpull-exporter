@@ -1,11 +1,13 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"strconv"
 	"sync"
 	"time"
 
+	"github.com/bitgo/cloudflare-logpull-exporter/pkg/logpull"
 	"github.com/prometheus/client_golang/prometheus"
 	prommodel "github.com/prometheus/common/model"
 )
@@ -18,7 +20,7 @@ import (
 const logPeriodRange = 7*24*time.Hour - time.Minute
 
 type collector struct {
-	api          *logpullAPI
+	api          *logpull.API
 	zoneIDs      []string
 	logPeriod    time.Duration
 	responseDesc *prometheus.Desc
@@ -28,7 +30,7 @@ type collector struct {
 
 // newCollector creates a new Logpull collector. Returns an error if any
 // parameters are invalid.
-func newCollector(api *logpullAPI, zoneIDs []string, logPeriod time.Duration, errorHandler func(error)) (*collector, error) {
+func newCollector(api *logpull.API, zoneIDs []string, logPeriod time.Duration, errorHandler func(error)) (*collector, error) {
 	if api == nil {
 		return nil, errors.New("invalid parameter: api must not be nil")
 	}
@@ -95,28 +97,53 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 		go func(zoneID string) {
 			defer wg.Done()
 
-			responses := make(map[logEntry]float64)
-
-			if err := c.api.pullLogEntries(zoneID, start, end, func(entry logEntry) error {
-				responses[entry]++
-				return nil
-			}); err != nil {
-				c.errorCounter.Inc()
-				c.errorHandler(err)
+			fields := []string{
+				"ClientRequestHost",
+				"EdgeResponseStatus",
+				"OriginResponseStatus",
 			}
 
-			for entry, count := range responses {
+			type response struct {
+				ClientRequestHost    string
+				EdgeResponseStatus   int
+				OriginResponseStatus int
+			}
+
+			data, err := c.api.ZoneLogs(zoneID, fields, 0, start, end)
+			if data != nil {
+				defer data.Close()
+			}
+			if err != nil {
+				c.errorHandler(err)
+				c.errorCounter.Inc()
+				c.errorCounter.Collect(ch)
+				return
+			}
+
+			responses := make(map[response]float64)
+			dec := json.NewDecoder(data)
+			for dec.More() {
+				var resp response
+				err := dec.Decode(&resp)
+				if err != nil {
+					c.errorHandler(err)
+					c.errorCounter.Inc()
+					c.errorCounter.Collect(ch)
+					return
+				}
+				responses[resp]++
+			}
+
+			for resp, count := range responses {
 				ch <- prometheus.MustNewConstMetric(
 					c.responseDesc,
 					prometheus.GaugeValue,
 					count,
-					entry.ClientRequestHost,
-					strconv.Itoa(entry.EdgeResponseStatus),
-					strconv.Itoa(entry.OriginResponseStatus),
+					resp.ClientRequestHost,
+					strconv.Itoa(resp.EdgeResponseStatus),
+					strconv.Itoa(resp.OriginResponseStatus),
 				)
 			}
-
-			c.errorCounter.Collect(ch)
 		}(zoneID)
 	}
 }
